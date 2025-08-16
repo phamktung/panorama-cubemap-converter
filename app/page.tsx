@@ -6,9 +6,10 @@ import { useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { Upload, Download, Eye } from "lucide-react"
+import { Upload, Download, Eye, Link } from "lucide-react"
 import { PanoramaConverter } from "@/components/panorama-converter"
 import { MarzipanoViewer } from "@/components/marzipano-viewer"
+import { ApiConverter } from "@/components/api-converter"
 
 export default function Home() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -16,6 +17,7 @@ export default function Home() {
   const [progress, setProgress] = useState(0)
   const [cubemapData, setCubemapData] = useState<any>(null)
   const [showViewer, setShowViewer] = useState(false)
+  const [activeTab, setActiveTab] = useState<"upload" | "api">("upload")
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -66,97 +68,133 @@ export default function Home() {
           <p className="text-lg text-gray-600">Convert 360° panoramic images to Marzipano cubemap format</p>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="w-5 h-5" />
-              Upload Panorama Image
-            </CardTitle>
-            <CardDescription>
-              Select an equirectangular panoramic image to convert to Marzipano cubemap tiles
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-              <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
-              {selectedFile ? (
-                <div className="space-y-2">
-                  <div className="text-sm text-gray-600">Selected file:</div>
-                  <div className="font-medium">{selectedFile.name}</div>
-                  <div className="text-sm text-gray-500">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <Upload className="w-12 h-12 text-gray-400 mx-auto" />
-                  <div className="text-gray-600">Click to select a panoramic image</div>
-                </div>
-              )}
-              <Button onClick={() => fileInputRef.current?.click()} variant="outline" className="mt-4">
-                {selectedFile ? "Change Image" : "Select Image"}
-              </Button>
-            </div>
+        <div className="flex justify-center">
+          <div className="flex bg-white rounded-lg p-1 shadow-sm border">
+            <Button
+              variant={activeTab === "upload" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setActiveTab("upload")}
+              className="flex items-center gap-2"
+            >
+              <Upload className="w-4 h-4" />
+              Upload File
+            </Button>
+            <Button
+              variant={activeTab === "api" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setActiveTab("api")}
+              className="flex items-center gap-2"
+            >
+              <Link className="w-4 h-4" />
+              Image URL
+            </Button>
+          </div>
+        </div>
 
-            {selectedFile && (
-              <div className="flex gap-2">
-                <Button onClick={handleConvert} disabled={isConverting} className="flex-1">
-                  {isConverting ? "Converting..." : "Convert to Cubemap"}
-                </Button>
-              </div>
+        {activeTab === "upload" ? (
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Upload className="w-5 h-5" />
+                  Upload Panorama Image
+                </CardTitle>
+                <CardDescription>
+                  Select an equirectangular panoramic image to convert to Marzipano cubemap tiles
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                  {selectedFile ? (
+                    <div className="space-y-2">
+                      <div className="text-sm text-gray-600">Selected file:</div>
+                      <div className="font-medium">{selectedFile.name}</div>
+                      <div className="text-sm text-gray-500">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Upload className="w-12 h-12 text-gray-400 mx-auto" />
+                      <div className="text-gray-600">Click to select a panoramic image</div>
+                    </div>
+                  )}
+                  <Button onClick={() => fileInputRef.current?.click()} variant="outline" className="mt-4">
+                    {selectedFile ? "Change Image" : "Select Image"}
+                  </Button>
+                </div>
+
+                {selectedFile && (
+                  <div className="flex gap-2">
+                    <Button onClick={handleConvert} disabled={isConverting} className="flex-1">
+                      {isConverting ? "Converting..." : "Convert to Cubemap"}
+                    </Button>
+                  </div>
+                )}
+
+                {isConverting && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span>Converting...</span>
+                      <span>{Math.round(progress)}%</span>
+                    </div>
+                    <Progress value={progress} className="w-full" />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {cubemapData && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Download className="w-5 h-5" />
+                    Conversion Complete
+                  </CardTitle>
+                  <CardDescription>Your panorama has been converted to Marzipano cubemap format</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <div className="font-medium">Total Tiles:</div>
+                      <div className="text-gray-600">{cubemapData.totalTiles}</div>
+                    </div>
+                    <div>
+                      <div className="font-medium">Zoom Levels:</div>
+                      <div className="text-gray-600">{cubemapData.zoomLevels}</div>
+                    </div>
+                    <div>
+                      <div className="font-medium">Tile Size:</div>
+                      <div className="text-gray-600">512x512 pixels</div>
+                    </div>
+                    <div>
+                      <div className="font-medium">Format:</div>
+                      <div className="text-gray-600">{"{z}/{f}/{y}/{x}.jpg"}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button onClick={handleDownload} className="flex-1">
+                      <Download className="w-4 h-4 mr-2" />
+                      Download Cubemap
+                    </Button>
+                    <Button onClick={() => setShowViewer(!showViewer)} variant="outline" className="flex-1">
+                      <Eye className="w-4 h-4 mr-2" />
+                      {showViewer ? "Hide Preview" : "Preview"}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             )}
-
-            {isConverting && (
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Converting...</span>
-                  <span>{Math.round(progress)}%</span>
-                </div>
-                <Progress value={progress} className="w-full" />
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {cubemapData && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Download className="w-5 h-5" />
-                Conversion Complete
-              </CardTitle>
-              <CardDescription>Your panorama has been converted to Marzipano cubemap format</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <div className="font-medium">Total Tiles:</div>
-                  <div className="text-gray-600">{cubemapData.totalTiles}</div>
-                </div>
-                <div>
-                  <div className="font-medium">Zoom Levels:</div>
-                  <div className="text-gray-600">{cubemapData.zoomLevels}</div>
-                </div>
-                <div>
-                  <div className="font-medium">Tile Size:</div>
-                  <div className="text-gray-600">512x512 pixels</div>
-                </div>
-                <div>
-                  <div className="font-medium">Format:</div>
-                  <div className="text-gray-600">{"{z}/{f}/{y}/{x}.jpg"}</div>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <Button onClick={handleDownload} className="flex-1">
-                  <Download className="w-4 h-4 mr-2" />
-                  Download Cubemap
-                </Button>
-                <Button onClick={() => setShowViewer(!showViewer)} variant="outline" className="flex-1">
-                  <Eye className="w-4 h-4 mr-2" />
-                  {showViewer ? "Hide Preview" : "Preview"}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          </>
+        ) : (
+          /* Added API converter component for URL-based conversion */
+          <ApiConverter />
         )}
 
         {showViewer && cubemapData && (

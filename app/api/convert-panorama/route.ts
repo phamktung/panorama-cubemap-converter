@@ -23,22 +23,50 @@ class ServerPanoramaConverter {
     zoomLevels: number
     maxZoom: number
   }> {
-    const response = await fetch(imageUrl)
-    if (!response.ok) {
-      throw new Error(`Failed to fetch image: ${response.statusText}`)
+    console.log("[v0] Starting conversion for URL:", imageUrl)
+
+    try {
+      const response = await fetch(imageUrl)
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`)
+      }
+
+      console.log("[v0] Image fetched successfully, content-type:", response.headers.get("content-type"))
+
+      const imageBuffer = await response.arrayBuffer()
+      console.log("[v0] Image buffer size:", imageBuffer.byteLength)
+
+      const imageBlob = new Blob([imageBuffer])
+
+      if (typeof OffscreenCanvas === "undefined") {
+        throw new Error("OffscreenCanvas is not available in this environment")
+      }
+
+      const canvas = new OffscreenCanvas(1, 1)
+      const ctx = canvas.getContext("2d")
+
+      if (!ctx) {
+        throw new Error("Failed to get 2D context from OffscreenCanvas")
+      }
+
+      console.log("[v0] Creating ImageBitmap...")
+
+      let imageBitmap: ImageBitmap
+      try {
+        imageBitmap = await createImageBitmap(imageBlob)
+        console.log("[v0] ImageBitmap created successfully, dimensions:", imageBitmap.width, "x", imageBitmap.height)
+      } catch (error) {
+        console.error("[v0] Failed to create ImageBitmap:", error)
+        throw new Error(`Failed to create ImageBitmap: ${error instanceof Error ? error.message : "Unknown error"}`)
+      }
+
+      const result = await this.processImage(imageBitmap)
+      console.log("[v0] Conversion completed successfully")
+      return result
+    } catch (error) {
+      console.error("[v0] Error in convertFromUrl:", error)
+      throw error
     }
-
-    const imageBuffer = await response.arrayBuffer()
-    const imageBlob = new Blob([imageBuffer])
-
-    const canvas = new OffscreenCanvas(1, 1)
-    const ctx = canvas.getContext("2d")!
-
-    // Create ImageBitmap from blob
-    const imageBitmap = await createImageBitmap(imageBlob)
-
-    const result = await this.processImage(imageBitmap)
-    return result
   }
 
   private async processImage(img: ImageBitmap): Promise<{
@@ -47,6 +75,8 @@ class ServerPanoramaConverter {
     zoomLevels: number
     maxZoom: number
   }> {
+    console.log("[v0] Processing image with dimensions:", img.width, "x", img.height)
+
     const width = img.width
     const height = img.height
 
@@ -62,62 +92,78 @@ class ServerPanoramaConverter {
       totalTiles += 6 * tilesPerSide * tilesPerSide
     }
 
-    for (let z = 0; z <= maxZoom; z++) {
-      const config = this.tileConfigs[z]
-      const tilesPerSide = Math.ceil(config.size / config.tileSize)
-      const faceSize = config.size
+    console.log("[v0] Will generate", totalTiles, "tiles across", zoomLevels, "zoom levels")
 
-      // Generate each cube face
-      for (let face = 0; face < 6; face++) {
-        const faceImageData = await this.generateCubeFace(img, face, faceSize)
-        const faceName = this.faceNames[face]
+    try {
+      for (let z = 0; z <= maxZoom; z++) {
+        console.log("[v0] Processing zoom level", z)
+        const config = this.tileConfigs[z]
+        const tilesPerSide = Math.ceil(config.size / config.tileSize)
+        const faceSize = config.size
 
-        // Split face into tiles
-        for (let y = 0; y < tilesPerSide; y++) {
-          for (let x = 0; x < tilesPerSide; x++) {
-            const tileBuffer = await this.createTile(faceImageData, x, y, config, faceSize)
-            const tileKey = `${z}/${faceName}/${y}/${x}`
-            tiles[tileKey] = tileBuffer
+        // Generate each cube face
+        for (let face = 0; face < 6; face++) {
+          console.log("[v0] Generating face", face, "for zoom level", z)
+          const faceImageData = await this.generateCubeFace(img, face, faceSize)
+          const faceName = this.faceNames[face]
+
+          // Split face into tiles
+          for (let y = 0; y < tilesPerSide; y++) {
+            for (let x = 0; x < tilesPerSide; x++) {
+              const tileBuffer = await this.createTile(faceImageData, x, y, config, faceSize)
+              const tileKey = `${z}/${faceName}/${y}/${x}`
+              tiles[tileKey] = tileBuffer
+            }
           }
         }
       }
-    }
 
-    const zipBuffer = await this.createZipFile(tiles)
+      console.log("[v0] All tiles generated, creating ZIP file...")
+      const zipBuffer = await this.createZipFile(tiles)
+      console.log("[v0] ZIP file created, size:", zipBuffer.length)
 
-    return {
-      zipBuffer,
-      totalTiles,
-      zoomLevels,
-      maxZoom,
+      return {
+        zipBuffer,
+        totalTiles,
+        zoomLevels,
+        maxZoom,
+      }
+    } catch (error) {
+      console.error("[v0] Error in processImage:", error)
+      throw error
     }
   }
 
   private async generateCubeFace(img: ImageBitmap, face: number, size: number): Promise<ImageData> {
-    const canvas = new OffscreenCanvas(size, size)
-    const ctx = canvas.getContext("2d")!
+    try {
+      const canvas = new OffscreenCanvas(size, size)
+      const ctx = canvas.getContext("2d")!
 
-    const sourceCanvas = new OffscreenCanvas(img.width, img.height)
-    const sourceCtx = sourceCanvas.getContext("2d")!
-    sourceCtx.drawImage(img, 0, 0)
-    const imgData = sourceCtx.getImageData(0, 0, img.width, img.height)
+      const sourceCanvas = new OffscreenCanvas(img.width, img.height)
+      const sourceCtx = sourceCanvas.getContext("2d")!
+      sourceCtx.drawImage(img, 0, 0)
+      const imgData = sourceCtx.getImageData(0, 0, img.width, img.height)
 
-    const faceData = ctx.createImageData(size, size)
+      const faceData = ctx.createImageData(size, size)
 
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const [u, v] = this.faceUVToEquirectangular(face, x / size, y / size)
-        const pixel = this.sampleEquirectangularBilinear(imgData, u, v, img.width, img.height)
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const [u, v] = this.faceUVToEquirectangular(face, x / size, y / size)
+          const pixel = this.sampleEquirectangularBilinear(imgData, u, v, img.width, img.height)
 
-        const idx = (y * size + x) * 4
-        faceData.data[idx] = pixel[0]
-        faceData.data[idx + 1] = pixel[1]
-        faceData.data[idx + 2] = pixel[2]
-        faceData.data[idx + 3] = 255
+          const idx = (y * size + x) * 4
+          faceData.data[idx] = pixel[0]
+          faceData.data[idx + 1] = pixel[1]
+          faceData.data[idx + 2] = pixel[2]
+          faceData.data[idx + 3] = 255
+        }
       }
-    }
 
-    return faceData
+      return faceData
+    } catch (error) {
+      console.error("[v0] Error generating cube face", face, ":", error)
+      throw error
+    }
   }
 
   private async createTile(
@@ -127,33 +173,55 @@ class ServerPanoramaConverter {
     config: TileConfig,
     faceSize: number,
   ): Promise<Buffer> {
-    const canvas = new OffscreenCanvas(config.tileSize, config.tileSize)
-    const ctx = canvas.getContext("2d")!
+    try {
+      const canvas = new OffscreenCanvas(config.tileSize, config.tileSize)
+      const ctx = canvas.getContext("2d")!
 
-    const sourceX = tileX * config.tileSize
-    const sourceY = tileY * config.tileSize
-    const sourceWidth = Math.min(config.tileSize, faceSize - sourceX)
-    const sourceHeight = Math.min(config.tileSize, faceSize - sourceY)
+      const sourceX = tileX * config.tileSize
+      const sourceY = tileY * config.tileSize
+      const sourceWidth = Math.min(config.tileSize, faceSize - sourceX)
+      const sourceHeight = Math.min(config.tileSize, faceSize - sourceY)
 
-    // Extract tile data from face
-    const tileData = ctx.createImageData(config.tileSize, config.tileSize)
+      // Extract tile data from face
+      const tileData = ctx.createImageData(config.tileSize, config.tileSize)
 
-    for (let y = 0; y < sourceHeight; y++) {
-      for (let x = 0; x < sourceWidth; x++) {
-        const sourceIdx = ((sourceY + y) * faceSize + (sourceX + x)) * 4
-        const tileIdx = (y * config.tileSize + x) * 4
-
-        tileData.data[tileIdx] = faceImageData.data[sourceIdx]
-        tileData.data[tileIdx + 1] = faceImageData.data[sourceIdx + 1]
-        tileData.data[tileIdx + 2] = faceImageData.data[sourceIdx + 2]
-        tileData.data[tileIdx + 3] = faceImageData.data[sourceIdx + 3]
+      for (let i = 0; i < tileData.data.length; i += 4) {
+        tileData.data[i] = 0 // R
+        tileData.data[i + 1] = 0 // G
+        tileData.data[i + 2] = 0 // B
+        tileData.data[i + 3] = 255 // A
       }
+
+      for (let y = 0; y < sourceHeight; y++) {
+        for (let x = 0; x < sourceWidth; x++) {
+          const sourceIdx = ((sourceY + y) * faceSize + (sourceX + x)) * 4
+          const tileIdx = (y * config.tileSize + x) * 4
+
+          if (sourceIdx >= 0 && sourceIdx < faceImageData.data.length - 3) {
+            tileData.data[tileIdx] = faceImageData.data[sourceIdx]
+            tileData.data[tileIdx + 1] = faceImageData.data[sourceIdx + 1]
+            tileData.data[tileIdx + 2] = faceImageData.data[sourceIdx + 2]
+            tileData.data[tileIdx + 3] = faceImageData.data[sourceIdx + 3]
+          }
+        }
+      }
+
+      ctx.putImageData(tileData, 0, 0)
+
+      let blob: Blob
+      try {
+        blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 1.0 })
+      } catch (error) {
+        console.error("[v0] Error converting canvas to blob:", error)
+        // Fallback: try with lower quality
+        blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 })
+      }
+
+      return Buffer.from(await blob.arrayBuffer())
+    } catch (error) {
+      console.error("[v0] Error creating tile:", error)
+      throw error
     }
-
-    ctx.putImageData(tileData, 0, 0)
-
-    const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 1.0 })
-    return Buffer.from(await blob.arrayBuffer())
   }
 
   private faceUVToEquirectangular(face: number, u: number, v: number): [number, number] {
@@ -251,37 +319,52 @@ class ServerPanoramaConverter {
   }
 
   private async createZipFile(tiles: { [key: string]: Buffer }): Promise<Buffer> {
-    const zip = new JSZip()
+    try {
+      const zip = new JSZip()
 
-    for (const [tilePath, buffer] of Object.entries(tiles)) {
-      zip.file(`${tilePath}.jpg`, buffer)
+      for (const [tilePath, buffer] of Object.entries(tiles)) {
+        zip.file(`${tilePath}.jpg`, buffer)
+      }
+
+      const config = {
+        format: "marzipano-cubemap",
+        tileStructure: "{z}/{f}/{y}/{x}.jpg (where f = r,l,u,d,f,b)",
+        faceMapping: {
+          r: "right (+X)",
+          l: "left (-X)",
+          u: "up (+Y)",
+          d: "down (-Y)",
+          f: "front (+Z)",
+          b: "back (-Z)",
+        },
+        tileConfigs: this.tileConfigs,
+        description: "Marzipano cubemap tiles generated from panoramic image with maximum quality preservation",
+      }
+
+      zip.file("config.json", JSON.stringify(config, null, 2))
+
+      const zipBuffer = await zip.generateAsync({ type: "nodebuffer" })
+      return zipBuffer
+    } catch (error) {
+      console.error("[v0] Error creating ZIP file:", error)
+      throw error
     }
-
-    const config = {
-      format: "marzipano-cubemap",
-      tileStructure: "{z}/{f}/{y}/{x}.jpg (where f = r,l,u,d,f,b)",
-      faceMapping: {
-        r: "right (+X)",
-        l: "left (-X)",
-        u: "up (+Y)",
-        d: "down (-Y)",
-        f: "front (+Z)",
-        b: "back (-Z)",
-      },
-      tileConfigs: this.tileConfigs,
-      description: "Marzipano cubemap tiles generated from panoramic image with maximum quality preservation",
-    }
-
-    zip.file("config.json", JSON.stringify(config, null, 2))
-
-    const zipBuffer = await zip.generateAsync({ type: "nodebuffer" })
-    return zipBuffer
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { imageUrl } = await request.json()
+    console.log("[v0] API endpoint called")
+
+    let body
+    try {
+      body = await request.json()
+    } catch (error) {
+      console.error("[v0] Error parsing request body:", error)
+      return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 })
+    }
+
+    const { imageUrl } = body
 
     if (!imageUrl) {
       return NextResponse.json({ error: "Image URL is required" }, { status: 400 })
@@ -289,13 +372,16 @@ export async function POST(request: NextRequest) {
 
     try {
       new URL(imageUrl)
-    } catch {
+    } catch (error) {
+      console.error("[v0] Invalid URL format:", imageUrl)
       return NextResponse.json({ error: "Invalid URL format" }, { status: 400 })
     }
 
+    console.log("[v0] Starting conversion process...")
     const converter = new ServerPanoramaConverter()
     const result = await converter.convertFromUrl(imageUrl)
 
+    console.log("[v0] Conversion successful, returning ZIP file")
     return new NextResponse(result.zipBuffer, {
       status: 200,
       headers: {
@@ -307,7 +393,15 @@ export async function POST(request: NextRequest) {
       },
     })
   } catch (error) {
-    console.error("Conversion error:", error)
-    return NextResponse.json({ error: "Failed to convert panorama image" }, { status: 500 })
+    console.error("[v0] Conversion error:", error)
+
+    const errorMessage = error instanceof Error ? error.message : "Unknown error occurred"
+    return NextResponse.json(
+      {
+        error: "Failed to convert panorama image",
+        details: errorMessage,
+      },
+      { status: 500 },
+    )
   }
 }
